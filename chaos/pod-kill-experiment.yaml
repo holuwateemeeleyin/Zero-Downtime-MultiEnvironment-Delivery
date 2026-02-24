@@ -1,0 +1,24 @@
+---
+# Chaos Experiment 1: Pod Kill
+# Uses Chaos Mesh PodChaos CRD.
+# Fallback: see chaos/run-chaos.sh for kubectl-based pod kill.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: backend-pod-kill
+  namespace: prod
+  labels:
+    chaos-experiment: "pod-kill"
+    shopmicro.io/experiment-id: "exp-001"
+spec:
+  action: pod-kill
+  mode: one                    # Kill exactly one pod
+  selector:
+    namespaces:
+      - prod
+    labelSelectors:
+      app: backend
+      track: stable
+  scheduler:
+    cron: "@once"              # Run once, not recurring
+  gracePeriod: 0               # Immediate kill — tests hard failure

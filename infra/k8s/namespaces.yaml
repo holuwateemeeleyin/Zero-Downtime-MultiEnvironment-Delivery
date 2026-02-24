@@ -1,0 +1,33 @@
+---
+# Namespaces for dev / staging / prod environments
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dev
+  labels:
+    env: dev
+    managed-by: shopmicro
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: staging
+  labels:
+    env: staging
+    managed-by: shopmicro
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: prod
+  labels:
+    env: prod
+    managed-by: shopmicro
+---
+# Prometheus monitoring namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    managed-by: shopmicro

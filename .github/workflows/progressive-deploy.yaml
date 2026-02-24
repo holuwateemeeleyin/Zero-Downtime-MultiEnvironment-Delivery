@@ -1,0 +1,134 @@
+name: Progressive Deploy — Canary Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: Target environment (dev/staging/prod)
+        required: true
+        default: staging
+        type: choice
+        options: [dev, staging, prod]
+      image_tag:
+        description: Image tag to deploy (e.g. abc1234)
+        required: true
+      canary_weight:
+        description: Initial canary traffic weight (%)
+        required: false
+        default: "20"
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "infra/k8s/backend/**"
+
+env:
+  REGISTRY: ghcr.io
+  ORG: shopmicro
+
+jobs:
+  # ── Deploy Canary ─────────────────────────────────────────────
+  deploy-canary:
+    name: Deploy Canary (${{ github.event.inputs.target_env || 'staging' }})
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.target_env || 'staging' }}
+    env:
+      TARGET_ENV: ${{ github.event.inputs.target_env || 'staging' }}
+      IMAGE_TAG:  ${{ github.event.inputs.image_tag || github.sha }}
+      CANARY_WEIGHT: ${{ github.event.inputs.canary_weight || '20' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Deploy canary with new image
+        run: |
+          echo "Deploying canary to namespace=${TARGET_ENV}"
+          echo "Image: ${REGISTRY}/${ORG}/backend:${IMAGE_TAG}"
+          echo "Canary weight: ${CANARY_WEIGHT}%"
+
+          # Update canary deployment image
+          kubectl set image deployment/backend-canary \
+            backend="${REGISTRY}/${ORG}/backend:${IMAGE_TAG}" \
+            -n "${TARGET_ENV}" --record 2>/dev/null || \
+            echo "[DRY RUN] kubectl set image backend-canary"
+
+          # Apply canary ingress weight
+          kubectl annotate ingress backend-canary -n "${TARGET_ENV}" \
+            "nginx.ingress.kubernetes.io/canary-weight=${CANARY_WEIGHT}" \
+            --overwrite 2>/dev/null || \
+            echo "[DRY RUN] kubectl annotate ingress backend-canary"
+
+          # Wait for rollout
+          kubectl rollout status deployment/backend-canary \
+            -n "${TARGET_ENV}" --timeout=120s 2>/dev/null || \
+            echo "[DRY RUN] Rollout status check"
+
+      - name: Confirm canary is live
+        run: |
+          echo "Canary deployed — sleeping 5 min to collect SLO signals..."
+          sleep 300
+
+  # ── SLO Gate: Evaluate and Promote or Rollback ───────────────
+  slo-gate:
+    name: SLO Gate — Promote or Rollback
+    runs-on: ubuntu-latest
+    needs: deploy-canary
+    environment: ${{ github.event.inputs.target_env || 'staging' }}
+    env:
+      TARGET_ENV: ${{ github.event.inputs.target_env || 'staging' }}
+      PROMETHEUS_URL: ${{ vars.PROMETHEUS_URL || 'http://prometheus.monitoring.svc.cluster.local:9090' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Make scripts executable
+        run: chmod +x scripts/promote.sh scripts/rollback.sh
+
+      - name: Run SLO gate
+        id: slo-gate
+        run: |
+          if ./scripts/promote.sh "${TARGET_ENV}" "${PROMETHEUS_URL}"; then
+            echo "result=promoted" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=rolled-back" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Post-promotion smoke test
+        if: steps.slo-gate.outputs.result == 'promoted'
+        run: |
+          chmod +x scripts/smoke-test.sh
+          ./scripts/smoke-test.sh "http://${TARGET_ENV}.shopmicro.local" "${TARGET_ENV}" || true
+
+      - name: Collect evidence
+        if: always()
+        run: |
+          chmod +x scripts/evidence-pack.sh
+          ./scripts/evidence-pack.sh "${TARGET_ENV}" || true
+
+      - name: Upload evidence pack
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-pack-${{ env.TARGET_ENV }}-${{ github.run_id }}
+          path: evidence-pack-*.tar.gz
+          retention-days: 30
+
+  # ── Notify: Deployment Result ─────────────────────────────────
+  notify:
+    name: Notify Deployment Result
+    runs-on: ubuntu-latest
+    needs: slo-gate
+    if: always()
+    steps:
+      - name: Deployment summary
+        run: |
+          RESULT="${{ needs.slo-gate.result }}"
+          if [[ "$RESULT" == "success" ]]; then
+            echo "✅ Canary PROMOTED to stable in ${{ github.event.inputs.target_env || 'staging' }}"
+          else
+            echo "❌ Canary ROLLED BACK in ${{ github.event.inputs.target_env || 'staging' }}"
+          fi

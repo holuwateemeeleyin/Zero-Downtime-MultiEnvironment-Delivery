@@ -1,0 +1,91 @@
+---
+# ML Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-service
+  namespace: prod
+  labels:
+    app: ml-service
+    version: v1
+    app.kubernetes.io/name: ml-service
+    app.kubernetes.io/part-of: shopmicro
+    env: prod
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ml-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: ml-service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "5000"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: ml-service
+          image: ghcr.io/shopmicro/ml-service:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5000
+              name: http
+          env:
+            - name: APP_VERSION
+              value: "v1"
+            - name: ENVIRONMENT
+              value: "production"
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "256Mi"
+            limits:
+              cpu: "750m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+---
+# ML Service Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-service
+  namespace: prod
+  labels:
+    app: ml-service
+spec:
+  selector:
+    app: ml-service
+  ports:
+    - port: 5000
+      targetPort: 5000
+      name: http

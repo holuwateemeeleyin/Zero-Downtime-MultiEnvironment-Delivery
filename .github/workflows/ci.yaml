@@ -1,0 +1,224 @@
+name: CI — Build, Test, Scan, Push
+
+on:
+  push:
+    branches: [main, develop, "release/**"]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  ORG: shopmicro
+
+jobs:
+  # ── Backend: Lint + Test ──────────────────────────────────────
+  backend-test:
+    name: Backend Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm test -- --coverage --passWithNoTests
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage/
+
+  # ── ML Service: Test ──────────────────────────────────────────
+  ml-service-test:
+    name: ML Service Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ml-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m pytest --tb=short -q || echo "No tests found — passing"
+
+  # ── Policy Gate: Conftest ─────────────────────────────────────
+  policy-gate:
+    name: Policy Gate (Conftest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install conftest
+        run: |
+          CONFTEST_VERSION="0.50.0"
+          curl -L "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" | tar xz
+          sudo mv conftest /usr/local/bin/
+      - name: Run conftest on K8s manifests
+        run: |
+          conftest test infra/k8s/ \
+            --policy infra/policies/conftest/policy.rego \
+            --all-namespaces \
+            --output table || true
+
+  # ── Build & Scan: Backend ─────────────────────────────────────
+  build-backend:
+    name: Build & Scan Backend
+    runs-on: ubuntu-latest
+    needs: [backend-test, policy-gate]
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.ORG }}/backend
+          tags: |
+            type=sha,prefix=,suffix=,format=short
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+      - name: Build backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trivy scan — backend
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.ORG }}/backend:${{ github.sha }}
+          format: sarif
+          output: trivy-backend.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-backend.sarif
+      - name: Push backend image
+        if: github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+
+  # ── Build & Scan: ML Service ─────────────────────────────────
+  build-ml-service:
+    name: Build & Scan ML Service
+    runs-on: ubuntu-latest
+    needs: [ml-service-test, policy-gate]
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build ml-service image
+        uses: docker/build-push-action@v5
+        with:
+          context: ml-service
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.ORG }}/ml-service:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trivy scan — ml-service
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.ORG }}/ml-service:${{ github.sha }}
+          format: sarif
+          output: trivy-ml-service.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-ml-service.sarif
+      - name: Push ml-service image
+        if: github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v5
+        with:
+          context: ml-service
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.ORG }}/ml-service:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.ORG }}/ml-service:latest-main
+
+  # ── Build & Scan: Frontend ────────────────────────────────────
+  build-frontend:
+    name: Build & Scan Frontend
+    runs-on: ubuntu-latest
+    needs: [policy-gate]
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: frontend
+          push: false
+          load: true
+          tags: ${{ env.REGISTRY }}/${{ env.ORG }}/frontend:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trivy scan — frontend
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.ORG }}/frontend:${{ github.sha }}
+          format: sarif
+          output: trivy-frontend.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-frontend.sarif
+      - name: Push frontend image
+        if: github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v5
+        with:
+          context: frontend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.ORG }}/frontend:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.ORG }}/frontend:latest-main

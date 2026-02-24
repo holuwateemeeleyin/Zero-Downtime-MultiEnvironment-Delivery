@@ -1,0 +1,69 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: shopmicro/backend:local
+    container_name: shopmicro-backend
+    ports:
+      - "8080:8080"
+    environment:
+      - APP_VERSION=v1-local
+      - NODE_ENV=development
+      - PORT=8080
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://localhost:8080/health" ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - shopmicro
+
+  ml-service:
+    build:
+      context: ./ml-service
+      dockerfile: Dockerfile
+    image: shopmicro/ml-service:local
+    container_name: shopmicro-ml-service
+    ports:
+      - "5000:5000"
+    environment:
+      - APP_VERSION=v1-local
+      - ENVIRONMENT=development
+      - PORT=5000
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')" ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - shopmicro
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_BACKEND_URL: http://localhost:8080
+        VITE_ML_URL: http://localhost:5000
+    image: shopmicro/frontend:local
+    container_name: shopmicro-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+      ml-service:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - shopmicro
+
+networks:
+  shopmicro:
+    name: shopmicro-network
+    driver: bridge

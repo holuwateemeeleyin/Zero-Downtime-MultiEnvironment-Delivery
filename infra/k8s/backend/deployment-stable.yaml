@@ -1,0 +1,113 @@
+---
+# Backend stable (v1) Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-stable
+  namespace: prod
+  labels:
+    app: backend
+    track: stable
+    version: v1
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: shopmicro
+    env: prod
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: backend
+      track: stable
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: backend
+        track: stable
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8080"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: backend
+          image: ghcr.io/shopmicro/backend:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: APP_VERSION
+              value: "v1"
+            - name: NODE_ENV
+              value: "production"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+---
+# Backend stable Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-stable
+  namespace: prod
+  labels:
+    app: backend
+    track: stable
+spec:
+  selector:
+    app: backend
+    track: stable
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+---
+# Backend primary service (routes to stable by default)
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: prod
+  labels:
+    app: backend
+spec:
+  selector:
+    app: backend
+    track: stable
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http

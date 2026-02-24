@@ -1,0 +1,40 @@
+# Node
+node_modules/
+npm-debug.log*
+coverage/
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+*.pyc
+
+# Frontend build
+frontend/dist/
+
+# Docker
+.dockerignore
+
+# Evidence (local only)
+evidence/
+evidence-pack-*.tar.gz
+
+# Secrets (never commit)
+*.env
+.env*
+secrets.yaml
+kubeconfig
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Terraform (if added)
+.terraform/
+*.tfstate
+*.tfstate.backup

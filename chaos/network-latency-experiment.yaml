@@ -1,0 +1,26 @@
+---
+# Chaos Experiment 2: Network Latency Injection
+# Injects 300ms latency on ml-service ingress traffic to simulate
+# dependency slowness and test backend timeout/retry logic.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: ml-service-latency
+  namespace: prod
+  labels:
+    chaos-experiment: "network-latency"
+    shopmicro.io/experiment-id: "exp-002"
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - prod
+    labelSelectors:
+      app: ml-service
+  delay:
+    latency: "300ms"
+    correlation: "25"           # 25% packet-level correlation
+    jitter: "50ms"
+  duration: "5m"               # Run for 5 minutes
+  direction: to                # Affect incoming traffic to ml-service
