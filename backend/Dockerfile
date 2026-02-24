@@ -1,7 +1,7 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm install --omit=dev --no-audit
 
 FROM node:20-alpine
 LABEL org.opencontainers.image.source="https://github.com/shopmicro/backend"

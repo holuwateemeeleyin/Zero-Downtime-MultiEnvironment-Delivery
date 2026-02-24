@@ -1,7 +1,7 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+RUN npm install --no-audit
 COPY . .
 ARG VITE_BACKEND_URL=http://backend:8080
 ARG VITE_ML_URL=http://ml-service:5000
