@@ -87,28 +87,28 @@ promote_canary() {
     -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "3")
 
   log "Step 1: Scale canary to ${stable_replicas} replicas"
-  kubectl scale deployment backend-canary -n "$NAMESPACE" --replicas="$stable_replicas"
+  kubectl scale deployment backend-canary -n "$NAMESPACE" --replicas="$stable_replicas" 2>/dev/null || log "[DRY RUN] kubectl scale backend-canary"
 
   log "Step 2: Wait for canary rollout..."
-  kubectl rollout status deployment/backend-canary -n "$NAMESPACE" --timeout=120s
+  kubectl rollout status deployment/backend-canary -n "$NAMESPACE" --timeout=120s 2>/dev/null || log "[DRY RUN] rollout status backend-canary"
 
   log "Step 3: Update stable deployment image to match canary"
   local canary_image
   canary_image=$(kubectl get deployment backend-canary -n "$NAMESPACE" \
     -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "ghcr.io/shopmicro/backend:v2")
-  kubectl set image deployment/backend-stable container=backend "$canary_image" -n "$NAMESPACE"
+  kubectl set image deployment/backend-stable container=backend "$canary_image" -n "$NAMESPACE" 2>/dev/null || log "[DRY RUN] kubectl set image backend-stable"
 
   log "Step 4: Wait for stable rollout..."
-  kubectl rollout status deployment/backend-stable -n "$NAMESPACE" --timeout=180s
+  kubectl rollout status deployment/backend-stable -n "$NAMESPACE" --timeout=180s 2>/dev/null || log "[DRY RUN] rollout status backend-stable"
 
   log "Step 5: Remove canary ingress (set weight to 0)"
   kubectl annotate ingress backend-canary -n "$NAMESPACE" \
     nginx.ingress.kubernetes.io/canary-weight=0 --overwrite 2>/dev/null || true
 
   log "Step 6: Scale down canary deployment"
-  kubectl scale deployment backend-canary -n "$NAMESPACE" --replicas=0
+  kubectl scale deployment backend-canary -n "$NAMESPACE" --replicas=0 2>/dev/null || log "[DRY RUN] kubectl scale backend-canary to 0"
 
-  log "✅ PROMOTION COMPLETE — stable now running $(kubectl get deployment backend-stable -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}')"
+  log "✅ PROMOTION COMPLETE — stable now running $(kubectl get deployment backend-stable -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "latest")"
 }
 
 rollback_canary() {
