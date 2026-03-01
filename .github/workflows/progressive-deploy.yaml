@@ -21,6 +21,7 @@ on:
     paths:
       - "backend/**"
       - "infra/k8s/backend/**"
+      - "scripts/**"
 
 env:
   REGISTRY: ghcr.io
