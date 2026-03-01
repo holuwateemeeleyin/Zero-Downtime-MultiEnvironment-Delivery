@@ -13,6 +13,7 @@
 # ============================================================
 set -euo pipefail
 
+# Variables
 NAMESPACE="${1:-prod}"
 PROMETHEUS_URL="${2:-http://prometheus.monitoring.svc.cluster.local:9090}"
 CANARY_WEIGHT_STEP=20
