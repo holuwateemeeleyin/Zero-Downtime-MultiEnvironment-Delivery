@@ -110,8 +110,10 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: "Internal server error" });
 });
 
-app.listen(port, () => {
-  console.log(`[backend] listening on port ${port}, version=${process.env.APP_VERSION || "v1"}`);
-});
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`[backend] listening on port ${port}, version=${process.env.APP_VERSION || "v1"}`);
+  });
+}
 
 module.exports = app;
