@@ -1,6 +1,6 @@
 # ShopMicro — Zero-Downtime Multi-Environment Delivery
 
-**Extra Credit Assignment | Platform Engineering | February 2026**
+**Platform Engineering | February 2026**
 
 ---
 
